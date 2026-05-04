@@ -77,6 +77,23 @@ spec:
                       type: string
                   type: object
                 type: array
+              hostNetwork:
+                description: HostNetwork specifies whether the agent pod should use the host's network namespace. When true, the pod will share the host's network stack.
+                type: boolean
+              agentHTTPPort:
+                description: AgentHTTPPort specifies the HTTP port for the agent container. Defaults to 8080 if not specified.
+                format: int32
+                type: integer
+              imagePullSecrets:
+                description: ImagePullSecrets specifies the secrets to use for pulling images.
+                items:
+                  description: LocalObjectReference contains enough information to let you locate the referenced object inside the same namespace.
+                  properties:
+                    name:
+                      description: Name of the referent.
+                      type: string
+                  type: object
+                type: array
             type: object
           status:
             description: WireguardStatus defines the observed state of Wireguard

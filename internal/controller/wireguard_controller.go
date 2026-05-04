@@ -877,6 +877,30 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 	}
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.HostNetwork, wireguard.Spec.HostNetwork) {
+		log.Info("Updating deployment host network settings")
+		dep := r.deploymentForWireguard(wireguard)
+		if err := r.Update(ctx, dep); err != nil {
+			log.Error(err, "unable to update deployment host network settings", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
+			return ctrl.Result{}, err
+		}
+	}
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntVal, wireguard.Spec.AgentHTTPPort) {
+		log.Info("Updating deployment agent HTTP port")
+		dep := r.deploymentForWireguard(wireguard)
+		if err := r.Update(ctx, dep); err != nil {
+			log.Error(err, "unable to update deployment agent HTTP port", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
+			return ctrl.Result{}, err
+		}
+	}
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.ImagePullSecrets, wireguard.Spec.ImagePullSecrets) {
+		log.Info("Updating deployment image pull secrets")
+		dep := r.deploymentForWireguard(wireguard)
+		if err := r.Update(ctx, dep); err != nil {
+			log.Error(err, "unable to update deployment image pull secrets", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
+			return ctrl.Result{}, err
+		}
+	}
 
 	// Update resource-level status and unique identifier if available
 	{
@@ -1115,6 +1139,10 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 	allowPrivilegeEscalation := false
 	automountServiceAccountToken := false
 
+	agentHttpPort := httpPort
+	if m.Spec.AgentHTTPPort != 0 {
+		agentHttpPort = int(m.Spec.AgentHTTPPort)
+	}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-dep",
@@ -1131,8 +1159,10 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 					Labels: ls,
 				},
 				Spec: corev1.PodSpec{
-					NodeSelector: m.Spec.NodeSelector,
-					Tolerations:  m.Spec.Tolerations,
+					HostNetwork:      m.Spec.HostNetwork,
+					ImagePullSecrets: m.Spec.ImagePullSecrets,
+					NodeSelector:     m.Spec.NodeSelector,
+					Tolerations:      m.Spec.Tolerations,
 					SecurityContext: &corev1.PodSecurityContext{
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileType("RuntimeDefault"),
@@ -1167,7 +1197,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 							Image:           r.AgentImage,
 							ImagePullPolicy: r.AgentImagePullPolicy,
 							Name:            "agent",
-							Command:         []string{"agent", "--v", "11", "--wg-iface", "wg0", "--wg-listen-port", fmt.Sprintf("%d", port), "--state", "/tmp/wireguard/state.json", "--wg-userspace-implementation-fallback", "wireguard-go"},
+							Command:         []string{"agent", "--v", "11", "--wg-iface", "wg0", "--wg-listen-port", fmt.Sprintf("%d", port), "--state", "/tmp/wireguard/state.json", "--wg-userspace-implementation-fallback", "wireguard-go", "--http-port", fmt.Sprintf("%d", agentHttpPort)},
 							Ports: []corev1.ContainerPort{
 								{
 									ContainerPort: port,
@@ -1188,7 +1218,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
-										Port: intstr.FromInt(httpPort),
+										Port: intstr.FromInt(agentHttpPort),
 										Path: "/health",
 									},
 								},
@@ -1197,7 +1227,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 								PeriodSeconds: 5,
 								ProbeHandler: corev1.ProbeHandler{
 									TCPSocket: &corev1.TCPSocketAction{
-										Port: intstr.FromInt(httpPort),
+										Port: intstr.FromInt(agentHttpPort),
 									},
 								},
 							},

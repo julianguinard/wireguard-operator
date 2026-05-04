@@ -76,8 +76,10 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 					Labels: ls,
 				},
 				Spec: corev1.PodSpec{
-					NodeSelector: wg.Spec.NodeSelector,
-					Tolerations:  wg.Spec.Tolerations,
+					HostNetwork:      wg.Spec.HostNetwork,
+					ImagePullSecrets: wg.Spec.ImagePullSecrets,
+					NodeSelector:     wg.Spec.NodeSelector,
+					Tolerations:      wg.Spec.Tolerations,
 					SecurityContext: &corev1.PodSecurityContext{
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileType("RuntimeDefault"),
@@ -140,6 +142,10 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 
 // agentContainer creates the agent container for the deployment.
 func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootFilesystem, allowPrivilegeEscalation bool) corev1.Container {
+	httpPort := HTTPPort
+	if wg.Spec.AgentHTTPPort != 0 {
+		httpPort = int(wg.Spec.AgentHTTPPort)
+	}
 	return corev1.Container{
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
@@ -156,6 +162,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 			"--wg-listen-port", fmt.Sprintf("%d", WireguardPort),
 			"--state", "/tmp/wireguard/state.json",
 			"--wg-userspace-implementation-fallback", "wireguard-go",
+			"--http-port", fmt.Sprintf("%d", httpPort),
 		},
 		Ports: []corev1.ContainerPort{
 			{
@@ -164,7 +171,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 				Protocol:      corev1.ProtocolUDP,
 			},
 			{
-				ContainerPort: WireguardPort,
+				ContainerPort: int32(httpPort),
 				Name:          "http",
 				Protocol:      corev1.ProtocolTCP,
 			},
@@ -184,7 +191,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
-					Port: intstr.FromInt(HTTPPort),
+					Port: intstr.FromInt(httpPort),
 					Path: "/health",
 				},
 			},
@@ -193,7 +200,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 			PeriodSeconds: 5,
 			ProbeHandler: corev1.ProbeHandler{
 				TCPSocket: &corev1.TCPSocketAction{
-					Port: intstr.FromInt(HTTPPort),
+					Port: intstr.FromInt(httpPort),
 				},
 			},
 		},

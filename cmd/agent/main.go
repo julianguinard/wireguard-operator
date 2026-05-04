@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/go-logr/stdr"
@@ -22,11 +23,13 @@ func main() {
 	var verbosity int
 	var wgUserspaceImplementationFallback string
 	var wireguardListenPort int
+	var agentHttpPort int
 	var wgUseUserspaceImpl bool
 	var metricsBindAddress string
 	flag.StringVar(&configFilePath, "state", "./state.json", "The location of the file that states the desired state")
 	flag.StringVar(&iface, "wg-iface", "wg0", "the wg device name. Default is wg0")
 	flag.StringVar(&wgUserspaceImplementationFallback, "wg-userspace-implementation-fallback", "wireguard-go", "The userspace implementation of wireguard to fallback to")
+	flag.IntVar(&agentHttpPort, "http-port", 8080, "The agent's webserver port")
 	flag.IntVar(&wireguardListenPort, "wg-listen-port", 51820, "the UDP port wireguard is listening on")
 	flag.IntVar(&verbosity, "v", 1, "the verbosity level")
 	flag.BoolVar(&wgUseUserspaceImpl, "wg-use-userspace-implementation", false, "Use userspace implementation")
@@ -148,7 +151,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	srv := &http.Server{Addr: ":8080"}
+	srv := &http.Server{Addr: ":" + strconv.Itoa(agentHttpPort)}
 	go func() {
 		<-ctx.Done()
 		log.Info("Shutting down agent")

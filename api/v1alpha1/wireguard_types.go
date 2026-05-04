@@ -67,8 +67,16 @@ type WireguardSpec struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// A list of Kubernetes taint tolerations applied to the Wireguard pod.
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
-	Agent       WireguardPodSpec    `json:"agent,omitempty"`
-	Metric      WireguardPodSpec    `json:"metric,omitempty"`
+	// HostNetwork specifies whether the agent pod should use the host's network namespace.
+	// When true, the pod will share the host's network stack.
+	HostNetwork bool `json:"hostNetwork,omitempty"`
+	// AgentHTTPPort specifies the HTTP port for the agent container.
+	// Defaults to 8080 if not specified.
+	AgentHTTPPort int32 `json:"agentHTTPPort,omitempty"`
+	// ImagePullSecrets specifies the secrets to use for pulling images.
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	Agent            WireguardPodSpec              `json:"agent,omitempty"`
+	Metric           WireguardPodSpec              `json:"metric,omitempty"`
 	// Tunnel configures optional traffic obfuscation. When enabled, a sidecar
 	// container tunnels WireGuard UDP traffic over WebSocket/TLS.
 	Tunnel TunnelSpec `json:"tunnel,omitempty"`
