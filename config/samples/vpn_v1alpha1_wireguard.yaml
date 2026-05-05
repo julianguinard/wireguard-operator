@@ -3,4 +3,14 @@ kind: Wireguard
 metadata:
   name: wireguard-sample
 spec:
-  # TODO(user): Add fields here
+  peerCIDR: "10.8.0.0/24"
+  peerCIDRv6: "fd00::/24"
+  # Additional IPv4 CIDRs to route through the WireGuard interface
+  additionalPeerCIDRs:
+    - "192.168.0.0/16"
+    - "172.16.0.0/12"
+  # Additional IPv6 CIDRs to route through the WireGuard interface
+  additionalPeerCIDRv6s:
+    - "2001:db8::/32"
+  dns: "8.8.8.8"
+  serviceType: "LoadBalancer"

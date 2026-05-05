@@ -58,6 +58,16 @@ spec:
               peerCIDRv6:
                 description: IPv6 CIDR range from which Wireguard peer IPv6 addresses will be allocated. When set, IPv6 support is enabled for this Wireguard instance.
                 type: string
+              additionalPeerCIDRs:
+                description: AdditionalPeerCIDRs is a list of additional IPv4 CIDR ranges that should be routed through the Wireguard interface. These CIDRs will be added as routes but IPs will not be allocated from them for peers.
+                items:
+                  type: string
+                type: array
+              additionalPeerCIDRv6s:
+                description: AdditionalPeerCIDRv6s is a list of additional IPv6 CIDR ranges that should be routed through the Wireguard interface. These CIDRs will be added as routes but IPs will not be allocated from them for peers.
+                items:
+                  type: string
+                type: array
               ipv6Only:
                 description: When true and peerCIDRv6 is set, only IPv6 connectivity will be configured for peers (no new IPv4 addresses, routes, or NAT).
                 type: boolean

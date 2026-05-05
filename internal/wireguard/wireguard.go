@@ -33,20 +33,29 @@ func syncRoute(iface string, cidr string, gw net.IP, family int) error {
 		return err
 	}
 
-	for _, route := range routes {
-		if route.LinkIndex == link.Attrs().Index {
-			return nil
-		}
-	}
+	// Check if this specific route already exists
 	_, dst, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return err
 	}
 
+	for _, route := range routes {
+		if route.Dst != nil && route.Dst.String() == dst.String() && route.LinkIndex == link.Attrs().Index {
+			// Route already exists
+			return nil
+		}
+	}
+
+	// Build route - for WireGuard with /32 addresses, omit the gateway to create a direct on-link route
+	// This is equivalent to: ip route add <cidr> dev <iface> (without "via <gw>")
 	route := netlink.Route{
 		LinkIndex: link.Attrs().Index,
 		Dst:       dst,
-		Gw:        gw,
+		Scope:     unix.RT_SCOPE_LINK,
+		// Note: We intentionally omit Gw here. When the WireGuard interface has a /32 address,
+		// the gateway IP is not reachable via a traditional route. By omitting the gateway,
+		// we create a direct route that sends traffic for this CIDR directly to the interface,
+		// which is what WireGuard expects.
 	}
 
 	err = netlink.RouteAdd(&route)
@@ -249,44 +258,37 @@ func (wg *Wireguard) Sync(state agent.State) error {
 			cidr4 = ipam.DefaultPeerCIDR4
 		}
 		if cidr4 != "" {
-			prefix4, err := netip.ParsePrefix(cidr4)
-			if err != nil {
-				return fmt.Errorf("failed to parse IPv4 CIDR %q: %w", cidr4, err)
-			}
-
-			addr4Net, gw4, err := gatewayIPFromPrefix(prefix4)
+			err := wg.syncV4CIDR(cidr4)
 			if err != nil {
 				return err
 			}
-
-			if err := syncAddress(wg.Iface, addr4Net, syscall.AF_INET); err != nil {
-				return err
-			}
-			if err := syncRoute(wg.Iface, cidr4, gw4, syscall.AF_INET); err != nil {
-				return err
+		}
+		// Sync routes for additional IPv4 CIDRs
+		for _, additionalCidr := range spec.AdditionalPeerCIDRs {
+			wg.Logger.Info("Adding route for additional IPv4 CIDR (equivalent to: ip route add <cidr> via <gw> dev <iface>)",
+				"cidr", additionalCidr, "interface", wg.Iface)
+			err := wg.syncV4CIDR(additionalCidr)
+			if err != nil {
+				wg.Logger.Error(err, "Failed to add route for additional IPv4 CIDR", "cidr", additionalCidr)
 			}
 		}
 	}
 
 	// IPv6 configuration.
 	if enableV6 {
-		cidr6 := spec.PeerCIDRv6
-
-		prefix6, err := netip.ParsePrefix(cidr6)
-		if err != nil {
-			return fmt.Errorf("failed to parse IPv6 CIDR %q: %w", cidr6, err)
-		}
-
-		addr6Net, gw6, err := gatewayIPFromPrefix(prefix6)
+		err := wg.syncV6CIDR(spec.PeerCIDRv6)
 		if err != nil {
 			return err
 		}
 
-		if err := syncAddress(wg.Iface, addr6Net, syscall.AF_INET6); err != nil {
-			return err
-		}
-		if err := syncRoute(wg.Iface, cidr6, gw6, syscall.AF_INET6); err != nil {
-			return err
+		// Sync routes for additional IPv6 CIDRs
+		for _, additionalCidr := range spec.AdditionalPeerCIDRv6s {
+			wg.Logger.Info("Adding route for additional IPv6 CIDR (equivalent to: ip -6 route add <cidr> via <gw> dev <iface>)",
+				"cidr", additionalCidr, "interface", wg.Iface)
+			err := wg.syncV6CIDR(additionalCidr)
+			if err != nil {
+				wg.Logger.Error(err, "Failed to add route for additional IPv6 CIDR", "cidr", additionalCidr)
+			}
 		}
 	}
 
@@ -296,6 +298,46 @@ func (wg *Wireguard) Sync(state agent.State) error {
 		return err
 	}
 
+	return nil
+}
+
+func (wg *Wireguard) syncV6CIDR(cidr6 string) error {
+	prefix6, err := netip.ParsePrefix(cidr6)
+	if err != nil {
+		return fmt.Errorf("failed to parse IPv6 CIDR %q: %w", cidr6, err)
+	}
+
+	addr6Net, gw6, err := gatewayIPFromPrefix(prefix6)
+	if err != nil {
+		return err
+	}
+
+	if err := syncAddress(wg.Iface, addr6Net, syscall.AF_INET6); err != nil {
+		return err
+	}
+	if err := syncRoute(wg.Iface, cidr6, gw6, syscall.AF_INET6); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (wg *Wireguard) syncV4CIDR(cidr4 string) error {
+	prefix4, err := netip.ParsePrefix(cidr4)
+	if err != nil {
+		return fmt.Errorf("failed to parse IPv4 CIDR %q: %w", cidr4, err)
+	}
+
+	addr4Net, gw4, err := gatewayIPFromPrefix(prefix4)
+	if err != nil {
+		return err
+	}
+
+	if err := syncAddress(wg.Iface, addr4Net, syscall.AF_INET); err != nil {
+		return err
+	}
+	if err := syncRoute(wg.Iface, cidr4, gw4, syscall.AF_INET); err != nil {
+		return err
+	}
 	return nil
 }
 

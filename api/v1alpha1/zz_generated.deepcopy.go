@@ -356,6 +356,16 @@ func (in *WireguardSpec) DeepCopyInto(out *WireguardSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.AdditionalPeerCIDRs != nil {
+		in, out := &in.AdditionalPeerCIDRs, &out.AdditionalPeerCIDRs
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.AdditionalPeerCIDRv6s != nil {
+		in, out := &in.AdditionalPeerCIDRv6s, &out.AdditionalPeerCIDRv6s
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Agent.DeepCopyInto(&out.Agent)
 	in.Metric.DeepCopyInto(&out.Metric)
 	in.Tunnel.DeepCopyInto(&out.Tunnel)
