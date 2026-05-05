@@ -66,6 +66,10 @@ spec:
                 type: string
               publicKey:
                 type: string
+              persistentKeepalive:
+                description: PersistentKeepalive specifies the interval in seconds for keepalive packets to be sent to the peer. This is useful for keeping NAT mappings open when the peer is behind a NAT.
+                format: int32
+                type: integer
               wireguardRef:
                 description: Foo is an example field of WireguardPeer. Edit wireguardpeer_types.go
                   to remove/update

@@ -59,6 +59,9 @@ type WireguardPeerSpec struct {
 	EgressNetworkPolicies EgressNetworkPolicies `json:"egressNetworkPolicies,omitempty"`
 	DownloadSpeed         Speed                 `json:"downloadSpeed,omitempty"`
 	UploadSpeed           Speed                 `json:"uploadSpeed,omitempty"`
+	// PersistentKeepalive specifies the interval in seconds for keepalive packets to be sent to the peer.
+	// This is useful for keeping NAT mappings open when the peer is behind a NAT.
+	PersistentKeepalive *int32 `json:"persistentKeepalive,omitempty"`
 }
 
 type EgressNetworkPolicies []EgressNetworkPolicy

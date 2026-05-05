@@ -3,4 +3,7 @@ kind: WireguardPeer
 metadata:
   name: wireguardpeer-sample
 spec:
-  # TODO(user): Add fields here
+  wireguardRef: wireguard-sample
+  publicKey: "<public-key>"
+  address: "10.0.0.2/32"
+  persistentKeepalive: 25

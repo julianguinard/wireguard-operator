@@ -403,6 +403,10 @@ func createPeersConfiguration(state agent.State, iface string) ([]wgtypes.PeerCo
 						PublicKey:         peer.PublicKey,
 						ReplaceAllowedIPs: true,
 					}
+					if peerState.Spec.PersistentKeepalive != nil {
+						duration := time.Duration(*peerState.Spec.PersistentKeepalive) * time.Second
+						p.PersistentKeepaliveInterval = &duration
+					}
 					peerConfigurationByPublicKey[p.PublicKey.String()] = p
 				}
 			}
@@ -442,6 +446,10 @@ func createPeersConfiguration(state agent.State, iface string) ([]wgtypes.PeerCo
 		p := wgtypes.PeerConfig{
 			AllowedIPs: allowed,
 			PublicKey:  key,
+		}
+		if peer.Spec.PersistentKeepalive != nil {
+			duration := time.Duration(*peer.Spec.PersistentKeepalive) * time.Second
+			p.PersistentKeepaliveInterval = &duration
 		}
 		peerConfigurationByPublicKey[p.PublicKey.String()] = p
 	}

@@ -161,11 +161,13 @@ spec:
                     type: string
                 type: object
               wireguardRef:
-                description: The name of the Wireguard instance in k8s that the peer
-                  belongs to. The wg instance should be in the same namespace as the
-                  peer.
+                description: The name of the Wireguard instance in k8s that the peer belongs to. The wg instance should be in the same namespace as the peer.
                 minLength: 1
                 type: string
+              persistentKeepalive:
+                description: PersistentKeepalive specifies the interval in seconds for keepalive packets to be sent to the peer. This is useful for keeping NAT mappings open when the peer is behind a NAT.
+                format: int32
+                type: integer
             required:
             - wireguardRef
             type: object

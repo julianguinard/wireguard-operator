@@ -332,6 +332,12 @@ DNS = %s`, strings.TrimSpace(string(v)), addressLine, dnsConfiguration)
 						tunnelPort = defaultTunnelPort
 					}
 
+					// Build PersistentKeepalive line if specified
+					persistentKeepaliveLine := ""
+					if peer.Spec.PersistentKeepalive != nil && *peer.Spec.PersistentKeepalive > 0 {
+						persistentKeepaliveLine = fmt.Sprintf("\nPersistentKeepalive = %d", *peer.Spec.PersistentKeepalive)
+					}
+
 					// Tunnel config with PreUp/PostDown hooks
 					tunnelCfg := pureCfg + fmt.Sprintf(`
 PreUp = wstunnel client -L udp://127.0.0.1:%d:127.0.0.1:%d wss://%s:%d &
@@ -340,8 +346,8 @@ PostDown = killall wstunnel || true
 [Peer]
 PublicKey = %s
 AllowedIPs = %s
-Endpoint = 127.0.0.1:%d
-`, port, port, serverAddress, tunnelPort, serverPublicKey, allowIps, port)
+Endpoint = 127.0.0.1:%d%s
+`, port, port, serverAddress, tunnelPort, serverPublicKey, allowIps, port, persistentKeepaliveLine)
 
 					if wireguard.Spec.Tunnel.DualMode {
 						// In dual mode, store both configs:
@@ -352,8 +358,8 @@ Endpoint = 127.0.0.1:%d
 [Peer]
 PublicKey = %s
 AllowedIPs = %s
-Endpoint = %s:%s
-`, serverPublicKey, allowIps, serverAddress, wireguard.Status.Port)
+Endpoint = %s:%s%s
+`, serverPublicKey, allowIps, serverAddress, wireguard.Status.Port, persistentKeepaliveLine)
 						newPeerCfgData[peer.Name] = []byte(directCfg)
 						newPeerCfgData[peer.Name+".tunnel"] = []byte(tunnelCfg)
 					} else {
@@ -361,13 +367,19 @@ Endpoint = %s:%s
 						newPeerCfgData[peer.Name] = []byte(tunnelCfg)
 					}
 				} else {
+					// Build PersistentKeepalive line if specified
+					persistentKeepaliveLine := ""
+					if peer.Spec.PersistentKeepalive != nil && *peer.Spec.PersistentKeepalive > 0 {
+						persistentKeepaliveLine = fmt.Sprintf("\nPersistentKeepalive = %d", *peer.Spec.PersistentKeepalive)
+					}
+
 					pureCfg = pureCfg + fmt.Sprintf(`
 
 [Peer]
 PublicKey = %s
 AllowedIPs = %s
-Endpoint = %s:%s
-`, serverPublicKey, allowIps, serverAddress, wireguard.Status.Port)
+Endpoint = %s:%s%s
+`, serverPublicKey, allowIps, serverAddress, wireguard.Status.Port, persistentKeepaliveLine)
 					newPeerCfgData[peer.Name] = []byte(pureCfg)
 				}
 			}
