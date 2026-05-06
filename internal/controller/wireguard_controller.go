@@ -1169,6 +1169,9 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: ls,
+					Annotations: map[string]string{
+						"cluster-autoscaler.kubernetes.io/safe-to-evict": "true",
+					},
 				},
 				Spec: corev1.PodSpec{
 					HostNetwork:      m.Spec.HostNetwork,
