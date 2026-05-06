@@ -52,6 +52,20 @@ spec:
           spec:
             description: WireguardSpec defines the desired state of Wireguard
             properties:
+              additionalPeerCIDRs:
+                description: |-
+                  AdditionalPeerCIDRs is a list of additional IPv4 CIDR ranges that should be routed through the Wireguard interface.
+                  These CIDRs will be added as routes but IPs will not be allocated from them for peers.
+                items:
+                  type: string
+                type: array
+              additionalPeerCIDRv6s:
+                description: |-
+                  AdditionalPeerCIDRv6s is a list of additional IPv6 CIDR ranges that should be routed through the Wireguard interface.
+                  These CIDRs will be added as routes but IPs will not be allocated from them for peers.
+                items:
+                  type: string
+                type: array
               address:
                 description: |-
                   A string field that specifies the address for the Wireguard Service.
@@ -117,6 +131,12 @@ spec:
                         type: object
                     type: object
                 type: object
+              agentHTTPPort:
+                description: |-
+                  AgentHTTPPort specifies the HTTP port for the agent container.
+                  Defaults to 8080 if not specified.
+                format: int32
+                type: integer
               dns:
                 description: A string field that specifies the DNS server(s) to be
                   used by the peers.
@@ -131,38 +151,36 @@ spec:
                   be useful to enable if the peers are having problems with sending
                   traffic to the internet.
                 type: boolean
-              hostNetwork:
-                description: |-  
-                  HostNetwork specifies whether the agent pod should use the host's network namespace.
-                  When true, the pod will share the host's network stack.
-                type: boolean
-              agentHTTPPort:
-                description: |-  
-                  AgentHTTPPort specifies the HTTP port for the agent container.
-                  Defaults to 8080 if not specified.
-                format: int32
-                type: integer
-              imagePullSecrets:
-                description: |-  
-                  ImagePullSecrets specifies the secrets to use for pulling images.
-                items:
-                  description: |-  
-                    LocalObjectReference contains enough information to let you locate the
-                    referenced object inside the same namespace.
-                  properties:
-                    name:
-                      default: ""
-                      description: |-  
-                        Name of the referent.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                      type: string
-                  type: object
-                type: array
               externalAddress:
                 description: |-
                   A string field that specifies the external address where peers should connect to this Wireguard instance.
                   When set, this is used for peer endpoints instead of Address or Service status.
                 type: string
+              hostNetwork:
+                description: |-
+                  HostNetwork specifies whether the agent pod should use the host's network namespace.
+                  When true, the pod will share the host's network stack.
+                type: boolean
+              imagePullSecrets:
+                description: ImagePullSecrets specifies the secrets to use for pulling
+                  images.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
               ipv6Only:
                 description: |-
                   IPv6Only indicates that only IPv6 connectivity should be configured for peers.
@@ -246,20 +264,6 @@ spec:
                   PeerCIDRv6 is the IPv6 CIDR range from which Wireguard peer IPv6 addresses will be allocated.
                   When set, IPv6 support is enabled for this Wireguard instance.
                 type: string
-              additionalPeerCIDRs:
-                description: |-
-                  AdditionalPeerCIDRs is a list of additional IPv4 CIDR ranges that should be routed through the Wireguard interface.
-                  These CIDRs will be added as routes but IPs will not be allocated from them for peers.
-                items:
-                  type: string
-                type: array
-              additionalPeerCIDRv6s:
-                description: |-
-                  AdditionalPeerCIDRv6s is a list of additional IPv6 CIDR ranges that should be routed through the Wireguard interface.
-                  These CIDRs will be added as routes but IPs will not be allocated from them for peers.
-                items:
-                  type: string
-                type: array
               port:
                 description: A field that specifies the value to use for a nodePort
                   ServiceType
@@ -274,6 +278,12 @@ spec:
                 description: A field that specifies the type of Kubernetes service
                   that should be used for the Wireguard VPN. This could be ClusterIP,
                   NodePort or LoadBalancer, depending on the needs of the deployment.
+                type: string
+              snatAs:
+                description: |-
+                  SnatAs specifies the source IP address to use for SNAT (Source NAT) on outgoing WireGuard traffic.
+                  When set, iptables rules will be added to masquerade traffic from peers to this specific IP address
+                  instead of using the default interface IP.
                 type: string
               tolerations:
                 description: A list of Kubernetes taint tolerations applied to the

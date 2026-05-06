@@ -31,6 +31,7 @@ func ApplyRulesV6(rules string) error {
 
 type Iptables struct {
 	Logger logr.Logger
+	Iface  string
 }
 
 func (it *Iptables) Sync(state agent.State) error {
@@ -43,6 +44,12 @@ func (it *Iptables) Sync(state agent.State) error {
 	enableV6 := spec.PeerCIDRv6 != ""
 	ipv6Only := spec.IPv6Only && enableV6
 
+	// Use configured interface name, default to "wg0" if not set
+	iface := it.Iface
+	if iface == "" {
+		iface = "wg0"
+	}
+
 	// IPv4 rules (skip in IPv6-only mode).
 	if !ipv6Only {
 		cidr4 := spec.PeerCIDR
@@ -50,7 +57,7 @@ func (it *Iptables) Sync(state agent.State) error {
 			cidr4 = ipam.DefaultPeerCIDR4
 		}
 		if cidr4 != "" {
-			cfg := GenerateIptableRulesFromPeers(cidr4, wgHostName, dns, peers)
+			cfg := GenerateIptableRulesFromPeers(cidr4, wgHostName, dns, peers, spec.SnatAs, iface, spec.AdditionalPeerCIDRs)
 			if err := ApplyRules(cfg); err != nil {
 				return err
 			}
@@ -60,7 +67,7 @@ func (it *Iptables) Sync(state agent.State) error {
 	// IPv6 rules.
 	if enableV6 {
 		cidr6 := spec.PeerCIDRv6
-		cfg6 := GenerateIp6tableRulesFromPeers(cidr6, wgHostName, dns, peers)
+		cfg6 := GenerateIp6tableRulesFromPeers(cidr6, wgHostName, dns, peers, spec.SnatAs, iface, spec.AdditionalPeerCIDRv6s)
 		if err := ApplyRulesV6(cfg6); err != nil {
 			return err
 		}
@@ -112,7 +119,7 @@ func GenerateIptableRulesFromNetworkPolicies(policies v1alpha1.EgressNetworkPoli
 	return strings.Join(rules, "\n")
 }
 
-func GenerateIptableRulesFromPeers(peerCIDR string, wgHostName string, dns string, peers []v1alpha1.WireguardPeer) string {
+func GenerateIptableRulesFromPeers(peerCIDR string, wgHostName string, dns string, peers []v1alpha1.WireguardPeer, snatAs string, iface string, additionalPeerCIDRs []string) string {
 	var rules []string
 
 	var natTableRules = fmt.Sprintf(`
@@ -121,9 +128,17 @@ func GenerateIptableRulesFromPeers(peerCIDR string, wgHostName string, dns strin
 :INPUT ACCEPT [0:0]
 :OUTPUT ACCEPT [0:0]
 :POSTROUTING ACCEPT [0:0]
--A POSTROUTING -s %s -o eth0 -j MASQUERADE
-COMMIT`, peerCIDR)
-
+-A POSTROUTING -s %s -o eth0 -j MASQUERADE`, peerCIDR)
+	if snatAs != "" {
+		for _, CIDR := range append([]string{peerCIDR}, additionalPeerCIDRs...) {
+			natTableRules = fmt.Sprintf(`%s
+-A POSTROUTING -s %s -o %s -j SNAT --to-source %s
+`, natTableRules, CIDR, iface, snatAs)
+		}
+	}
+	natTableRules = fmt.Sprintf(`%s
+COMMIT
+`, natTableRules)
 	for _, peer := range peers {
 
 		//tc(peer.Spec.DownloadSpeed, peer.Spec.UploadSpeed)
@@ -143,7 +158,7 @@ COMMIT
 }
 
 // GenerateIp6tableRulesFromPeers mirrors GenerateIptableRulesFromPeers but for IPv6 traffic.
-func GenerateIp6tableRulesFromPeers(peerCIDR string, wgHostName string, dns string, peers []v1alpha1.WireguardPeer) string {
+func GenerateIp6tableRulesFromPeers(peerCIDR string, wgHostName string, dns string, peers []v1alpha1.WireguardPeer, snatAs string, iface string, additionalPeerCIDRs []string) string {
 	var rules []string
 
 	var natTableRules = fmt.Sprintf(`
@@ -152,9 +167,17 @@ func GenerateIp6tableRulesFromPeers(peerCIDR string, wgHostName string, dns stri
 ::INPUT ACCEPT [0:0]
 ::OUTPUT ACCEPT [0:0]
 ::POSTROUTING ACCEPT [0:0]
--A POSTROUTING -s %s -o eth0 -j MASQUERADE
-COMMIT`, peerCIDR)
-
+-A POSTROUTING -s %s -o eth0 -j MASQUERADE`, peerCIDR)
+	if snatAs != "" {
+		for _, CIDR := range append([]string{peerCIDR}, additionalPeerCIDRs...) {
+			natTableRules = fmt.Sprintf(`%s
+-A POSTROUTING -s %s -o %s -j SNAT --to-source %s
+`, natTableRules, CIDR, iface, snatAs)
+		}
+	}
+	natTableRules = fmt.Sprintf(`%s
+COMMIT
+`, natTableRules)
 	for _, peer := range peers {
 		if peer.Spec.AddressV6 == "" {
 			continue

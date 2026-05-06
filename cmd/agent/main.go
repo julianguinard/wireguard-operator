@@ -85,6 +85,7 @@ func main() {
 	}
 	it := iptables.Iptables{
 		Logger: log.WithName("iptables"),
+		Iface:  iface,
 	}
 
 	close, err := agent.OnStateChange(configFilePath, log.WithName("onStateChange"), func(state agent.State) {

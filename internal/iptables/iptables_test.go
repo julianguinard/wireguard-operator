@@ -129,9 +129,66 @@ func TestIptableRules(t *testing.T) {
 func TestGenerateIptableRulesFromPeersUsesProvidedCIDR(t *testing.T) {
 	peers := []v1alpha1.WireguardPeer{}
 	const cidr = "192.168.100.0/24"
-	rules := GenerateIptableRulesFromPeers(cidr, "1.2.3.4", "8.8.8.8", peers)
+	rules := GenerateIptableRulesFromPeers(cidr, "1.2.3.4", "8.8.8.8", peers, "", "wg0", nil)
 	if !containsSubstring(rules, "-A POSTROUTING -s "+cidr+" -o eth0 -j MASQUERADE") {
 		t.Fatalf("expected NAT rule to use cidr %s, got: %s", cidr, rules)
+	}
+	// expect no SNAT directive as it is empty string
+	if containsSubstring(rules, "SNAT") {
+		t.Fatalf("expected no SNAT rule as snatAs is not defined")
+	}
+}
+
+func TestGenerateIptableRulesFromPeersWithSnatAs(t *testing.T) {
+	peers := []v1alpha1.WireguardPeer{}
+	const cidr = "192.168.100.0/24"
+	const snatAs = "203.0.113.10"
+	var additionalPeerCIDRs = []string{
+		"192.168.101.0/24",
+	}
+	const iface = "wg0"
+	rules := GenerateIptableRulesFromPeers(cidr, "1.2.3.4", "8.8.8.8", peers, snatAs, iface, additionalPeerCIDRs)
+
+	for _, CIDR := range append(additionalPeerCIDRs, cidr) {
+		// Check that SNAT rule is present with correct interface
+		expectedSnatRule := "-A POSTROUTING -s " + CIDR + " -o " + iface + " -j SNAT --to-source " + snatAs
+		if !containsSubstring(rules, expectedSnatRule) {
+			t.Fatalf("expected SNAT rule %q, got: %s", expectedSnatRule, rules)
+		}
+	}
+
+	// Check that MASQUERADE rule is still present (both rules coexist)
+	if !containsSubstring(rules, "-o eth0 -j MASQUERADE") {
+		t.Fatalf("expected MASQUERADE rule to still be present when snatAs is set, got: %s", rules)
+	}
+}
+
+func TestGenerateIptableRulesFromPeersWithCustomInterface(t *testing.T) {
+	peers := []v1alpha1.WireguardPeer{}
+	const cidr = "192.168.100.0/24"
+	const snatAs = "203.0.113.10"
+
+	var additionalPeerCIDRs = []string{
+		"192.168.101.0/24",
+	}
+	const iface = "custom-wg"
+	rules := GenerateIptableRulesFromPeers(cidr, "1.2.3.4", "8.8.8.8", peers, snatAs, iface, additionalPeerCIDRs)
+
+	// Check that SNAT rule uses the custom interface name
+	for _, CIDR := range append(additionalPeerCIDRs, cidr) {
+		// Check that SNAT rule is present with correct interface
+		expectedSnatRule := "-A POSTROUTING -s " + CIDR + " -o " + iface + " -j SNAT --to-source " + snatAs
+		if !containsSubstring(rules, expectedSnatRule) {
+			t.Fatalf("expected SNAT rule %q, got: %s", expectedSnatRule, rules)
+		}
+		if !containsSubstring(rules, expectedSnatRule) {
+			t.Fatalf("expected SNAT rule with custom interface %q, got: %s", expectedSnatRule, rules)
+		}
+	}
+
+	// Ensure it doesn't use the default wg0
+	if containsSubstring(rules, "-o wg0 -j SNAT") {
+		t.Fatalf("expected custom interface, not wg0, got: %s", rules)
 	}
 }
 

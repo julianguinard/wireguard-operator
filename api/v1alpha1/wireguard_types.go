@@ -86,6 +86,10 @@ type WireguardSpec struct {
 	// Tunnel configures optional traffic obfuscation. When enabled, a sidecar
 	// container tunnels WireGuard UDP traffic over WebSocket/TLS.
 	Tunnel TunnelSpec `json:"tunnel,omitempty"`
+	// SnatAs specifies the source IP address to use for SNAT (Source NAT) on outgoing WireGuard traffic.
+	// When set, iptables rules will be added to masquerade traffic from peers to this specific IP address
+	// instead of using the default interface IP.
+	SnatAs string `json:"snatAs,omitempty"`
 }
 
 // TunnelSpec configures traffic obfuscation via a tunneling sidecar.
