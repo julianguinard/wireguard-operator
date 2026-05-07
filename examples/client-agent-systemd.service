@@ -1,0 +1,27 @@
+[Unit]
+Description=WireGuard Operator Client Agent
+After=network.target wireguard@wg0.service
+Wants=wireguard@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/client-agent \
+  --public-key=%i \
+  --namespace=default \
+  --kubeconfig=/etc/kubernetes/admin.conf \
+  --wg-config-path=/etc/wireguard/wg0.conf \
+  --wg-iface=wg0 \
+  --v=2
+
+Restart=always
+RestartSec=10
+
+# Environment
+Environment="KUBECONFIG=/etc/kubernetes/admin.conf"
+
+# Security
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_MODULE
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_MODULE
+
+[Install]
+WantedBy=multi-user.target

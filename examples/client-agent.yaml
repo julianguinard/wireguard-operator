@@ -1,0 +1,88 @@
+# Example deployment of client-agent on a client machine
+# This should be deployed as a systemd service or container on machines
+# that need to join the WireGuard mesh as clients
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-agent-config
+  namespace: default
+data:
+  PEER_NAME: "client-machine-1"
+  WIREGUARD_REF: "vpn"
+  NAMESPACE: "default"
+  WG_CONFIG_PATH: "/etc/wireguard/wg0.conf"
+  WG_IFACE: "wg0"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: client-agent
+  namespace: default
+  labels:
+    app: client-agent
+spec:
+  selector:
+    matchLabels:
+      app: client-agent
+  template:
+    metadata:
+      labels:
+        app: client-agent
+    spec:
+      hostNetwork: true
+      containers:
+      - name: client-agent
+        image: wireguard-operator/client-agent:latest
+        args:
+        - "--peer-name=$(PEER_NAME)"
+        - "--wireguard-ref=$(WIREGUARD_REF)"
+        - "--namespace=$(NAMESPACE)"
+        - "--wg-config-path=$(WG_CONFIG_PATH)"
+        - "--wg-iface=$(WG_IFACE)"
+        - "--v=2"
+        env:
+        - name: PEER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: client-agent-config
+              key: PEER_NAME
+        - name: WIREGUARD_REF
+          valueFrom:
+            configMapKeyRef:
+              name: client-agent-config
+              key: WIREGUARD_REF
+        - name: NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              name: client-agent-config
+              key: NAMESPACE
+        - name: WG_CONFIG_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: client-agent-config
+              key: WG_CONFIG_PATH
+        - name: WG_IFACE
+          valueFrom:
+            configMapKeyRef:
+              name: client-agent-config
+              key: WG_IFACE
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_MODULE
+        volumeMounts:
+        - name: wireguard-config
+          mountPath: /etc/wireguard
+        - name: lib-modules
+          mountPath: /lib/modules
+          readOnly: true
+      volumes:
+      - name: wireguard-config
+        hostPath:
+          path: /etc/wireguard
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules

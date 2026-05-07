@@ -1,0 +1,230 @@
+# Complete example: Setting up a client machine with client-agent
+# This file demonstrates the full workflow from creating resources to deployment
+
+# Step 1: Create the Wireguard instance (run on Kubernetes cluster)
+apiVersion: vpn.wireguard-operator.io/v1alpha1
+kind: Wireguard
+metadata:
+  name: vpn
+  namespace: default
+spec:
+  mtu: "1380"
+  dns: "8.8.8.8, 8.8.4.4"
+  peerCIDR: "10.8.0.0/24"
+---
+# Step 2: Create ServiceAccount and RBAC for client-agent
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: client-agent
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: client-agent
+  namespace: default
+rules:
+- apiGroups: ["vpn.wireguard-operator.io"]
+  resources: ["wireguardpeers", "wireguards"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: client-agent
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: client-agent
+  namespace: default
+roleRef:
+  kind: Role
+  name: client-agent
+  apiGroup: rbac.authorization.k8s.io
+---
+# Step 3: Create WireguardPeer for the client machine
+apiVersion: vpn.wireguard-operator.io/v1alpha1
+kind: WireguardPeer
+metadata:
+  name: client-machine-1
+  namespace: default
+spec:
+  wireguardRef: "vpn"
+  # Optional: Configure specific allowed IPs for this peer
+  # allowedIPs: "10.0.0.0/8"
+  # Optional: Set persistent keepalive for NAT traversal
+  # persistentKeepalive: 25
+---
+# Step 4: Generate kubeconfig for the client (run on Kubernetes cluster)
+# This ConfigMap contains instructions to generate the kubeconfig
+# In practice, you would run the commands from the quickstart guide
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-agent-kubeconfig-gen
+  namespace: default
+data:
+  generate.sh: |
+    #!/bin/bash
+    NAMESPACE="default"
+    PEER_NAME="client-machine-1"
+    
+    # Get service account token
+    TOKEN=$(kubectl -n ${NAMESPACE} create token client-agent --duration=8760h)
+    
+    # Get cluster info
+    CA_CERT=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+    API_SERVER=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')
+    
+    # Generate kubeconfig
+    cat <<EOF
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - name: kubernetes
+      cluster:
+        certificate-authority-data: ${CA_CERT}
+        server: ${API_SERVER}
+    contexts:
+    - name: client-agent
+      context:
+        cluster: kubernetes
+        user: client-agent
+    current-context: client-agent
+    users:
+    - name: client-agent
+      user:
+        token: ${TOKEN}
+    EOF
+---
+# Step 5: Client-agent systemd service template (deploy on client machine)
+# Save this as /etc/systemd/system/client-agent.service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-agent-systemd-template
+  namespace: default
+data:
+  client-agent.service: |
+    [Unit]
+    Description=WireGuard Operator Client Agent
+    After=network.target wireguard@wg0.service
+    Wants=wireguard@wg0.service
+    
+    [Service]
+    Type=simple
+    ExecStart=/usr/local/bin/client-agent \
+      --peer-name=client-machine-1 \
+      --wireguard-ref=vpn \
+      --namespace=default \
+      --kubeconfig=/etc/wireguard/kubeconfig \
+      --wg-config-path=/etc/wireguard/wg0.conf \
+      --wg-iface=wg0 \
+      --v=2
+    
+    Restart=always
+    RestartSec=10
+    
+    [Install]
+    WantedBy=multi-user.target
+---
+# Step 6: Optional - Deploy client-agent as a DaemonSet on Kubernetes nodes
+# This is useful when client machines are also Kubernetes worker nodes
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: client-agent
+  namespace: default
+  labels:
+    app: client-agent
+spec:
+  selector:
+    matchLabels:
+      app: client-agent
+  template:
+    metadata:
+      labels:
+        app: client-agent
+    spec:
+      serviceAccountName: client-agent
+      hostNetwork: true
+      containers:
+      - name: client-agent
+        image: ghcr.io/nccloud/wireguard-operator/client-agent:latest
+        args:
+        - "--peer-name=$(PEER_NAME)"
+        - "--wireguard-ref=$(WIREGUARD_REF)"
+        - "--namespace=$(NAMESPACE)"
+        - "--wg-config-path=$(WG_CONFIG_PATH)"
+        - "--wg-iface=$(WG_IFACE)"
+        - "--v=2"
+        env:
+        - name: PEER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: WIREGUARD_REF
+          value: "vpn"
+        - name: NAMESPACE
+          value: "default"
+        - name: WG_CONFIG_PATH
+          value: "/etc/wireguard/wg0.conf"
+        - name: WG_IFACE
+          value: "wg0"
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_MODULE
+        volumeMounts:
+        - name: wireguard-config
+          mountPath: /etc/wireguard
+        - name: lib-modules
+          mountPath: /lib/modules
+          readOnly: true
+      volumes:
+      - name: wireguard-config
+        hostPath:
+          path: /etc/wireguard
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules
+---
+# Step 7: Monitoring - ServiceMonitor for Prometheus (optional)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: client-agent
+  namespace: default
+  labels:
+    app: client-agent
+spec:
+  selector:
+    matchLabels:
+      app: client-agent
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+# Step 8: Service to expose metrics (for ServiceMonitor)
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-agent-metrics
+  namespace: default
+  labels:
+    app: client-agent
+spec:
+  selector:
+    app: client-agent
+  ports:
+  - name: metrics
+    port: 9587
+    targetPort: 9587
+    protocol: TCP
