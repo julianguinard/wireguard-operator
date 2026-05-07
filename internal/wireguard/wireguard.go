@@ -22,7 +22,9 @@ import (
 
 const MTU = 1420
 
-func syncRoute(iface string, cidr string, gw net.IP, family int) error {
+// SyncRoute adds a route for a specific CIDR to the given interface
+// This is equivalent to: ip route add <cidr> dev <iface>
+func SyncRoute(iface string, cidr string, gw net.IP, family int) error {
 	link, err := netlink.LinkByName(iface)
 	if err != nil {
 		return err
@@ -315,7 +317,7 @@ func (wg *Wireguard) syncV6CIDR(cidr6 string) error {
 	if err := syncAddress(wg.Iface, addr6Net, syscall.AF_INET6); err != nil {
 		return err
 	}
-	if err := syncRoute(wg.Iface, cidr6, gw6, syscall.AF_INET6); err != nil {
+	if err := SyncRoute(wg.Iface, cidr6, gw6, syscall.AF_INET6); err != nil {
 		return err
 	}
 	return nil
@@ -335,7 +337,7 @@ func (wg *Wireguard) syncV4CIDR(cidr4 string) error {
 	if err := syncAddress(wg.Iface, addr4Net, syscall.AF_INET); err != nil {
 		return err
 	}
-	if err := syncRoute(wg.Iface, cidr4, gw4, syscall.AF_INET); err != nil {
+	if err := SyncRoute(wg.Iface, cidr4, gw4, syscall.AF_INET); err != nil {
 		return err
 	}
 	return nil

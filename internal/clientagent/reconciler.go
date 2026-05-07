@@ -6,15 +6,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-logr/logr"
-	"golang.zx2c4.com/wireguard/wgctrl"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"github.com/nccloud/wireguard-operator/internal/wireguard"
+	"golang.org/x/sys/unix"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -153,7 +154,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 
 		// Apply configuration using wgctrl
-		if err := r.applyConfigWithWgCtrl(tmpConfigPath, interfaceName); err != nil {
+		if err := r.applyConfigWithWgSyncconf(tmpConfigPath, interfaceName); err != nil {
 			// Clean up temp file on error
 			_ = os.Remove(tmpConfigPath)
 			r.Logger.Error(err, "failed to apply config", "path", configPath, "interface", interfaceName)
@@ -375,235 +376,182 @@ func (r *Reconciler) writeConfig(path string, config string) error {
 	return os.WriteFile(path, []byte(config), 0600)
 }
 
-// applyConfigWithWgCtrl applies the WireGuard configuration using wgctrl
-func (r *Reconciler) applyConfigWithWgCtrl(configPath string, interfaceName string) error {
-	r.Logger.Info("using wgctrl to apply configuration", "interface", interfaceName)
-
-	// Parse the configuration file
-	config, err := r.parseWireGuardConfigFile(configPath)
+// applyConfigWithWgSyncconf applies the WireGuard configuration using 'wg syncconf'
+func (r *Reconciler) applyConfigWithWgSyncconf(configPath string, interfaceName string) error {
+	// Read the original config file
+	originalConfig, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to parse config file: %w", err)
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Create wgctrl client
-	client, err := wgctrl.New()
+	// Parse the config to extract only PrivateKey from [Interface] section
+	syncconfConfig, err := r.createSyncconfConfig(string(originalConfig))
 	if err != nil {
-		return fmt.Errorf("failed to create wgctrl client: %w", err)
-	}
-	defer client.Close()
-
-	// Build wgctrl configuration
-	cfg := wgtypes.Config{}
-
-	// Configure interface settings if private key is present
-	if config.Interface.PrivateKey != "" {
-		key, err := wgtypes.ParseKey(config.Interface.PrivateKey)
-		if err != nil {
-			return fmt.Errorf("failed to parse private key: %w", err)
-		}
-		cfg.PrivateKey = &key
+		return fmt.Errorf("failed to create syncconf config: %w", err)
 	}
 
-	// Configure listen port if specified
-	if config.Interface.ListenPort != nil {
-		cfg.ListenPort = config.Interface.ListenPort
+	// Write syncconf-valid config to a temporary file
+	tmpSyncconfPath := configPath + ".syncconf"
+	if err := os.WriteFile(tmpSyncconfPath, []byte(syncconfConfig), 0600); err != nil {
+		return fmt.Errorf("failed to write syncconf temp file: %w", err)
+	}
+	defer os.Remove(tmpSyncconfPath) // Clean up after use
+
+	// Use 'wg syncconf' command
+	wgPath, err := exec.LookPath("wg")
+	if err != nil {
+		return fmt.Errorf("wg command not found: %w", err)
 	}
 
-	// Configure peers
-	var peerConfigs []wgtypes.PeerConfig
-	for _, peer := range config.Peer {
-		publicKey, err := wgtypes.ParseKey(peer.PublicKey)
-		if err != nil {
-			return fmt.Errorf("failed to parse peer public key %s: %w", peer.PublicKey, err)
-		}
+	r.Logger.Info("using 'wg syncconf' to apply configuration", "interface", interfaceName)
 
-		peerConfig := wgtypes.PeerConfig{
-			PublicKey: publicKey,
-		}
+	// Command: wg syncconf <interface> <config-file>
+	cmd := exec.Command(wgPath, "syncconf", interfaceName, tmpSyncconfPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
-		// Parse allowed IPs
-		if peer.AllowedIPs != "" {
-			allowedIPs, err := r.parseAllowedIPs(peer.AllowedIPs)
-			if err != nil {
-				return fmt.Errorf("failed to parse allowed IPs for peer %s: %w", peer.PublicKey, err)
-			}
-			peerConfig.AllowedIPs = allowedIPs
-			peerConfig.ReplaceAllowedIPs = true
-		}
-
-		// Parse endpoint if specified
-		if peer.Endpoint != "" {
-			endpoint, err := net.ResolveUDPAddr("udp", peer.Endpoint)
-			if err != nil {
-				return fmt.Errorf("failed to parse endpoint %s for peer %s: %w", peer.Endpoint, peer.PublicKey, err)
-			}
-			peerConfig.Endpoint = endpoint
-		}
-
-		// Parse pre-shared key if specified
-		if peer.PreSharedKey != "" {
-			psk, err := wgtypes.ParseKey(peer.PreSharedKey)
-			if err != nil {
-				return fmt.Errorf("failed to parse pre-shared key for peer %s: %w", peer.PublicKey, err)
-			}
-			peerConfig.PresharedKey = &psk
-		}
-
-		// Parse persistent keepalive if specified
-		if peer.PersistentKeepalive != nil && *peer.PersistentKeepalive > 0 {
-			duration := time.Duration(*peer.PersistentKeepalive) * time.Second
-			peerConfig.PersistentKeepaliveInterval = &duration
-		}
-
-		peerConfigs = append(peerConfigs, peerConfig)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("wg syncconf failed: %w", err)
 	}
 
-	cfg.Peers = peerConfigs
-	// make sure we do not interrupt existing sessions
-	cfg.ReplacePeers = false
-
-	// Apply configuration
-	if err := client.ConfigureDevice(interfaceName, cfg); err != nil {
-		return fmt.Errorf("failed to configure device %s: %w", interfaceName, err)
+	// After applying config, sync routes for all AllowedIPs (like wg quick would do)
+	if err := r.syncAllowedIPRoutes(interfaceName, string(originalConfig)); err != nil {
+		r.Logger.Error(err, "failed to sync routes for AllowedIPs", "interface", interfaceName)
+		// Note: We don't fail here as the config was applied successfully, just routes failed
 	}
-
-	r.Logger.Info("successfully applied configuration using wgctrl", "interface", interfaceName, "peers", len(peerConfigs))
 
 	return nil
 }
 
-// parseWireGuardConfigFile parses a WireGuard configuration file into a WireGuardConfig struct
-func (r *Reconciler) parseWireGuardConfigFile(configPath string) (*WireGuardConfig, error) {
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	return r.parseWireGuardConfigContent(string(content))
-}
-
-// parseWireGuardConfigContent parses WireGuard config content into a WireGuardConfig struct
-func (r *Reconciler) parseWireGuardConfigContent(content string) (*WireGuardConfig, error) {
-	config := &WireGuardConfig{}
-
-	lines := strings.Split(content, "\n")
-	var currentSection string
-	var currentPeer PeerConfig
+// createSyncconfConfig creates a syncconf-valid config with only PrivateKey in [Interface] section
+func (r *Reconciler) createSyncconfConfig(config string) (string, error) {
+	lines := strings.Split(config, "\n")
+	var result strings.Builder
+	inInterface := false
+	interfaceWritten := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Skip comments and empty lines
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		// Check for section headers
+		if strings.HasPrefix(trimmed, "[") {
+			if strings.EqualFold(trimmed, "[Interface]") {
+				inInterface = true
+				interfaceWritten = false
+				result.WriteString("[Interface]\n")
+				continue
+			} else {
+				inInterface = false
+			}
+		}
+
+		// In [Interface] section, only keep PrivateKey
+		if inInterface {
+			if strings.HasPrefix(trimmed, "PrivateKey") {
+				result.WriteString(line)
+				result.WriteString("\n")
+				interfaceWritten = true
+			}
 			continue
 		}
+
+		// Keep all other sections (Peer, etc.) as-is
+		result.WriteString(line)
+		result.WriteString("\n")
+	}
+
+	if !interfaceWritten {
+		return "", fmt.Errorf("no PrivateKey found in [Interface] section")
+	}
+
+	return result.String(), nil
+}
+
+// syncAllowedIPRoutes adds routes for all AllowedIPs in the configuration
+func (r *Reconciler) syncAllowedIPRoutes(interfaceName string, config string) error {
+	// Parse peer sections to extract AllowedIPs
+	allowedIPs := r.extractAllowedIPs(config)
+
+	if len(allowedIPs) == 0 {
+		r.Logger.V(2).Info("no AllowedIPs found to sync routes for", "interface", interfaceName)
+		return nil
+	}
+
+	r.Logger.Info("syncing routes for AllowedIPs", "interface", interfaceName, "count", len(allowedIPs))
+
+	// Call wireguard.SyncRoute for each AllowedIP
+	for _, allowedIP := range allowedIPs {
+		// Determine IP family
+		family := unix.AF_INET
+		if strings.Contains(allowedIP, ":") {
+			family = unix.AF_INET6
+		}
+
+		// Parse the CIDR to get the gateway IP (similar to how syncV4CIDR/syncV6CIDR work)
+		prefix, err := netip.ParsePrefix(allowedIP)
+		if err != nil {
+			r.Logger.Error(err, "failed to parse AllowedIP prefix", "allowedIP", allowedIP)
+			continue
+		}
+
+		// Get gateway IP from prefix (next IP in the prefix)
+		gw := prefix.Addr().Next()
+		var gwIP net.IP
+		if gw.Is4() {
+			b := gw.As4()
+			gwIP = net.IPv4(b[0], b[1], b[2], b[3])
+		} else if gw.Is6() {
+			b := gw.As16()
+			gwIP = net.IP(b[:])
+		} else {
+			r.Logger.Error(fmt.Errorf("unsupported address family"), "unsupported address family for AllowedIP", "allowedIP", allowedIP)
+			continue
+		}
+
+		// Call wireguard.SyncRoute to add the route
+		if err := wireguard.SyncRoute(interfaceName, allowedIP, gwIP, family); err != nil {
+			r.Logger.Error(err, "failed to sync route for AllowedIP", "allowedIP", allowedIP, "interface", interfaceName)
+			// Continue with other routes even if one fails
+		} else {
+			r.Logger.V(2).Info("successfully synced route for AllowedIP", "allowedIP", allowedIP, "interface", interfaceName)
+		}
+	}
+
+	return nil
+}
+
+// extractAllowedIPs parses the config and extracts all AllowedIPs from peer sections
+func (r *Reconciler) extractAllowedIPs(config string) []string {
+	var allowedIPs []string
+	lines := strings.Split(config, "\n")
+
+	inPeer := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
 
 		// Check for section headers
 		if strings.HasPrefix(trimmed, "[") {
-			// Save previous peer if exists
-			if currentSection == "peer" && currentPeer.PublicKey != "" {
-				config.Peer = append(config.Peer, currentPeer)
-				currentPeer = PeerConfig{}
-			}
-
-			if strings.EqualFold(trimmed, "[Interface]") {
-				currentSection = "interface"
-			} else if strings.EqualFold(trimmed, "[Peer]") {
-				currentSection = "peer"
-			}
+			inPeer = strings.EqualFold(trimmed, "[Peer]")
 			continue
 		}
 
-		// Parse key=value pairs
-		parts := strings.SplitN(trimmed, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		switch currentSection {
-		case "interface":
-			switch key {
-			case "PrivateKey":
-				config.Interface.PrivateKey = value
-			case "Address":
-				config.Interface.Address = value
-			case "DNS":
-				config.Interface.DNS = value
-			case "MTU":
-				config.Interface.MTU = value
-			case "ListenPort":
-				if port, err := parseInt(value); err == nil {
-					config.Interface.ListenPort = &port
-				}
-			case "Table":
-				config.Interface.Table = value
-			case "FwMark":
-				config.Interface.FwMark = value
-			case "SaveConfig":
-				if val, err := parseBool(value); err == nil {
-					config.Interface.SaveConfig = &val
-				}
-			}
-
-		case "peer":
-			switch key {
-			case "PublicKey":
-				currentPeer.PublicKey = value
-			case "PreSharedKey":
-				currentPeer.PreSharedKey = value
-			case "AllowedIPs":
-				currentPeer.AllowedIPs = value
-			case "Endpoint":
-				currentPeer.Endpoint = value
-			case "PersistentKeepalive":
-				if keepalive, err := parseInt(value); err == nil {
-					currentPeer.PersistentKeepalive = &keepalive
+		// Extract AllowedIPs from peer sections
+		if inPeer && strings.HasPrefix(trimmed, "AllowedIPs") {
+			// Parse the AllowedIPs value (format: AllowedIPs = 10.0.0.1/32, 192.168.1.0/24)
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) == 2 {
+				ipsStr := strings.TrimSpace(parts[1])
+				// Split by comma to handle multiple IPs
+				ips := strings.Split(ipsStr, ",")
+				for _, ip := range ips {
+					ip = strings.TrimSpace(ip)
+					if ip != "" {
+						allowedIPs = append(allowedIPs, ip)
+					}
 				}
 			}
 		}
 	}
 
-	// Save last peer if exists
-	if currentSection == "peer" && currentPeer.PublicKey != "" {
-		config.Peer = append(config.Peer, currentPeer)
-	}
-
-	return config, nil
-}
-
-// parseAllowedIPs parses a comma-separated list of allowed IPs
-func (r *Reconciler) parseAllowedIPs(allowedIPs string) ([]net.IPNet, error) {
-	var result []net.IPNet
-
-	ipList := strings.Split(allowedIPs, ",")
-	for _, ip := range ipList {
-		ip = strings.TrimSpace(ip)
-		if ip == "" {
-			continue
-		}
-
-		_, ipnet, err := net.ParseCIDR(ip)
-		if err != nil {
-			return nil, fmt.Errorf("invalid CIDR %q: %w", ip, err)
-		}
-		result = append(result, *ipnet)
-	}
-
-	return result, nil
-}
-
-// parseInt parses a string to int
-func parseInt(s string) (int, error) {
-	var result int
-	_, err := fmt.Sscanf(s, "%d", &result)
-	return result, err
-}
-
-// parseBool parses a string to bool
-func parseBool(s string) (bool, error) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	return s == "true" || s == "yes" || s == "1", nil
+	return allowedIPs
 }
