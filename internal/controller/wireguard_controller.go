@@ -32,11 +32,11 @@ import (
 	"github.com/nccloud/wireguard-operator/internal/ipam"
 	"github.com/nccloud/wireguard-operator/internal/resources"
 
-	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	meta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -117,7 +117,7 @@ func (r *WireguardReconciler) getNodeIps(ctx context.Context) ([]string, error) 
 		return nil, err
 	}
 
-	ips := []string{}
+	var ips []string
 
 	for _, node := range nodes.Items {
 		for _, address := range node.Status.Addresses {
@@ -310,7 +310,7 @@ func (r *WireguardReconciler) updateWireguardPeers(ctx context.Context, req ctrl
 		peerPrivSecret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Name: peer.Spec.PrivateKey.SecretKeyRef.Name, Namespace: peer.Namespace}, peerPrivSecret); err == nil {
 			if v, ok := peerPrivSecret.Data[peer.Spec.PrivateKey.SecretKeyRef.Key]; ok {
-				addresses := []string{}
+				var addresses []string
 				if peer.Spec.Address != "" {
 					addresses = append(addresses, peer.Spec.Address)
 				}
@@ -817,7 +817,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// deployment
 
 	deploymentFound := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Name: wireguard.Name + "-dep", Namespace: wireguard.Namespace}, deploymentFound)
+	err = r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-dep"), Namespace: wireguard.Namespace}, deploymentFound)
 	if err != nil && errors.IsNotFound(err) {
 		dep := r.deploymentForWireguard(wireguard)
 		log.Info("Creating a new dep", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name, "useUserspace", wireguard.Spec.UseWgUserspaceImplementation)
@@ -1055,7 +1055,7 @@ func (r *WireguardReconciler) serviceForWireguard(m *v1alpha1.Wireguard, service
 		Protocol:   corev1.ProtocolUDP,
 		NodePort:   m.Spec.NodePort,
 		Port:       port,
-		TargetPort: intstr.FromInt(port),
+		TargetPort: intstr.FromInt32(port),
 	}}
 
 	if m.Spec.Tunnel.Enabled {
@@ -1067,7 +1067,7 @@ func (r *WireguardReconciler) serviceForWireguard(m *v1alpha1.Wireguard, service
 			Name:       "tunnel",
 			Protocol:   corev1.ProtocolTCP,
 			Port:       tunnelPort,
-			TargetPort: intstr.FromInt(int(tunnelPort)),
+			TargetPort: intstr.FromInt32(tunnelPort),
 		}
 		if m.Spec.Tunnel.DualMode {
 			svcPorts = append(svcPorts, tunnelSvcPort)
@@ -1115,7 +1115,7 @@ func (r *WireguardReconciler) serviceForWireguardMetrics(m *v1alpha1.Wireguard) 
 				Name:       "metrics",
 				Protocol:   corev1.ProtocolTCP,
 				Port:       metricsPort,
-				TargetPort: intstr.FromInt(metricsPort),
+				TargetPort: intstr.FromInt32(metricsPort),
 			}},
 			Type: corev1.ServiceTypeClusterIP,
 		},
@@ -1233,7 +1233,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
-										Port: intstr.FromInt(agentHttpPort),
+										Port: intstr.FromInt32(int32(agentHttpPort)),
 										Path: "/health",
 									},
 								},
@@ -1242,7 +1242,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 								PeriodSeconds: 5,
 								ProbeHandler: corev1.ProbeHandler{
 									TCPSocket: &corev1.TCPSocketAction{
-										Port: intstr.FromInt(agentHttpPort),
+										Port: intstr.FromInt32(int32(agentHttpPort)),
 									},
 								},
 							},
@@ -1295,7 +1295,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
 						TCPSocket: &corev1.TCPSocketAction{
-							Port: intstr.FromInt(int(tunnelPort)),
+							Port: intstr.FromInt32(tunnelPort),
 						},
 					},
 				},
