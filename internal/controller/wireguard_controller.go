@@ -84,7 +84,7 @@ func (r *WireguardReconciler) ConfigmapForWireguard(m *v1alpha1.Wireguard, hostn
 	ls := labelsForWireguard(m.Name)
 	dep := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name + "-config",
+			Name:      resources.SanitizeName(m.Name, "-config"),
 			Namespace: m.Namespace,
 			Labels:    ls,
 		},
@@ -226,7 +226,7 @@ func (r *WireguardReconciler) updateWireguardPeers(ctx context.Context, req ctrl
 	ipv6Only := wireguard.Spec.IPv6Only && v6Enabled
 
 	// Ensure or create the aggregated peer configs Secret
-	peerCfgSecretName := wireguard.Name + "-peer-configs"
+	peerCfgSecretName := resources.SanitizeName(wireguard.Name, "-peer-configs")
 	peerCfgSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: peerCfgSecretName, Namespace: wireguard.Namespace}, peerCfgSecret); err != nil {
 		if errors.IsNotFound(err) {
@@ -501,7 +501,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	svcFound := &corev1.Service{}
-	err = r.Get(ctx, types.NamespacedName{Name: wireguard.Name + "-metrics-svc", Namespace: wireguard.Namespace}, svcFound)
+	err = r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-metrics-svc"), Namespace: wireguard.Namespace}, svcFound)
 	if err != nil && errors.IsNotFound(err) {
 
 		svc := r.serviceForWireguardMetrics(wireguard)
@@ -560,7 +560,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		dnsSearchDomain = wireguard.Spec.DnsSearchDomain
 	}
 
-	err = r.Get(ctx, types.NamespacedName{Name: wireguard.Name + "-svc", Namespace: wireguard.Namespace}, svcFound)
+	err = r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-svc"), Namespace: wireguard.Namespace}, svcFound)
 	if err != nil && errors.IsNotFound(err) {
 		svc := r.serviceForWireguard(wireguard, serviceType)
 		log.Info("Creating a new service", "service.Namespace", svc.Namespace, "service.Name", svc.Name)
@@ -796,7 +796,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// configmap
 
 	configFound := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: wireguard.Name + "-config", Namespace: wireguard.Namespace}, configFound)
+	err = r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-config"), Namespace: wireguard.Namespace}, configFound)
 	if err != nil && errors.IsNotFound(err) {
 		config := r.ConfigmapForWireguard(wireguard, address)
 		log.Info("Creating a new config", "config.Namespace", config.Namespace, "config.Name", config.Name)
@@ -1078,7 +1078,7 @@ func (r *WireguardReconciler) serviceForWireguard(m *v1alpha1.Wireguard, service
 
 	dep := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        m.Name + "-svc",
+			Name:        resources.SanitizeName(m.Name, "-svc"),
 			Namespace:   m.Namespace,
 			Annotations: m.Spec.ServiceAnnotations,
 			Labels:      labels,
@@ -1105,7 +1105,7 @@ func (r *WireguardReconciler) serviceForWireguardMetrics(m *v1alpha1.Wireguard) 
 
 	dep := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name + "-metrics-svc",
+			Name:      resources.SanitizeName(m.Name, "-metrics-svc"),
 			Namespace: m.Namespace,
 			Labels:    labels,
 		},
@@ -1157,7 +1157,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 	}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name + "-dep",
+			Name:      resources.SanitizeName(m.Name, "-dep"),
 			Namespace: m.Namespace,
 			Labels:    ls,
 		},
@@ -1227,7 +1227,7 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 							},
 							EnvFrom: []corev1.EnvFromSource{{
 								ConfigMapRef: &corev1.ConfigMapEnvSource{
-									LocalObjectReference: corev1.LocalObjectReference{Name: m.Name + "-config"},
+									LocalObjectReference: corev1.LocalObjectReference{Name: resources.SanitizeName(m.Name, "-config")},
 								},
 							}},
 							ReadinessProbe: &corev1.Probe{

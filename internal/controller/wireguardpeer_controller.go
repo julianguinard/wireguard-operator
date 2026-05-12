@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/nccloud/wireguard-operator/api/v1alpha1"
+	"github.com/nccloud/wireguard-operator/internal/resources"
 
 	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	corev1 "k8s.io/api/core/v1"
@@ -57,7 +58,7 @@ func (r *WireguardPeerReconciler) secretForPeer(m *v1alpha1.WireguardPeer, priva
 	ls := labelsForWireguard(m.Name)
 	dep := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name + "-peer",
+			Name:      resources.SanitizeName(m.Name, "-peer"),
 			Namespace: m.Namespace,
 			Labels:    ls,
 		},
@@ -119,7 +120,7 @@ func (r *WireguardPeerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if peer.Spec.PublicKey == "" {
-		secretName := peer.Name + "-peer"
+		secretName := resources.SanitizeName(peer.Name, "-peer")
 		existingSecret := &corev1.Secret{}
 		var publicKey string
 

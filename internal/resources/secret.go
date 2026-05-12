@@ -37,7 +37,7 @@ func NewSecretBuilder(scheme *runtime.Scheme) *SecretBuilder {
 func (b *SecretBuilder) ForWireguard(wg *v1alpha1.Wireguard, state []byte, privateKey, publicKey string) (*corev1.Secret, error) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      wg.Name,
+			Name:      SanitizeName(wg.Name, ""),
 			Namespace: wg.Namespace,
 			Labels:    LabelsForWireguard(wg.Name),
 		},
@@ -59,7 +59,7 @@ func (b *SecretBuilder) ForWireguard(wg *v1alpha1.Wireguard, state []byte, priva
 func (b *SecretBuilder) ForPeer(peer *v1alpha1.WireguardPeer, privateKey, publicKey string) (*corev1.Secret, error) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      peer.Name + "-peer",
+			Name:      SanitizeName(peer.Name, "-peer"),
 			Namespace: peer.Namespace,
 			Labels:    LabelsForWireguard(peer.Name),
 		},

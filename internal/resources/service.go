@@ -75,7 +75,7 @@ func (b *ServiceBuilder) ForWireguard(wg *v1alpha1.Wireguard, serviceType corev1
 
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        wg.Name + "-svc",
+			Name:        SanitizeName(wg.Name, "-svc"),
 			Namespace:   wg.Namespace,
 			Annotations: wg.Spec.ServiceAnnotations,
 			Labels:      labels,
@@ -106,7 +106,7 @@ func (b *ServiceBuilder) ForWireguardMetrics(wg *v1alpha1.Wireguard) (*corev1.Se
 
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      wg.Name + "-metrics-svc",
+			Name:      SanitizeName(wg.Name, "-metrics-svc"),
 			Namespace: wg.Namespace,
 			Labels:    labels,
 		},

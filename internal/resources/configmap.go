@@ -37,7 +37,7 @@ func NewConfigMapBuilder(scheme *runtime.Scheme) *ConfigMapBuilder {
 func (b *ConfigMapBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*corev1.ConfigMap, error) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      wg.Name + "-config",
+			Name:      SanitizeName(wg.Name, "-config"),
 			Namespace: wg.Namespace,
 			Labels:    LabelsForWireguard(wg.Name),
 		},

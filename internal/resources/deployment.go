@@ -62,7 +62,7 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      wg.Name + "-dep",
+			Name:      SanitizeName(wg.Name, "-dep"),
 			Namespace: wg.Namespace,
 			Labels:    ls,
 		},
@@ -97,7 +97,7 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 							Name: "config",
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
-									SecretName: wg.Name,
+									SecretName: SanitizeName(wg.Name, ""),
 								},
 							},
 						},
@@ -184,7 +184,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 		EnvFrom: []corev1.EnvFromSource{
 			{
 				ConfigMapRef: &corev1.ConfigMapEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{Name: wg.Name + "-config"},
+					LocalObjectReference: corev1.LocalObjectReference{Name: SanitizeName(wg.Name, "-config")},
 				},
 			},
 		},
