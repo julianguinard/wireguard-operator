@@ -24,33 +24,31 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// DeploymentBuilder builds deployments for wireguard resources.
-type DeploymentBuilder struct {
+// DaemonSetBuilder builds daemonsets for wireguard resources.
+type DaemonSetBuilder struct {
 	scheme     *runtime.Scheme
 	podBuilder *PodBuilder
 }
 
-// NewDeploymentBuilder creates a new DeploymentBuilder.
-func NewDeploymentBuilder(scheme *runtime.Scheme, agentImage string, agentImagePullPolicy corev1.PullPolicy) *DeploymentBuilder {
-	return &DeploymentBuilder{
+// NewDaemonSetBuilder creates a new DaemonSetBuilder.
+func NewDaemonSetBuilder(scheme *runtime.Scheme, agentImage string, agentImagePullPolicy corev1.PullPolicy) *DaemonSetBuilder {
+	return &DaemonSetBuilder{
 		scheme:     scheme,
 		podBuilder: NewPodBuilder(agentImage, agentImagePullPolicy),
 	}
 }
 
-// ForWireguard creates a deployment for a Wireguard server.
-func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deployment, error) {
+// ForWireguard creates a daemonset for a Wireguard server.
+func (b *DaemonSetBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.DaemonSet, error) {
 	ls := LabelsForWireguard(wg.Name)
-	replicas := int32(1)
 
-	dep := &appsv1.Deployment{
+	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      SanitizeName(wg.Name, "-dep"),
+			Name:      SanitizeName(wg.Name, "-ds"),
 			Namespace: wg.Namespace,
 			Labels:    ls,
 		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
+		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: ls,
 			},
@@ -58,9 +56,9 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 		},
 	}
 
-	if err := SetOwnerReference(wg, dep, b.scheme); err != nil {
+	if err := SetOwnerReference(wg, ds, b.scheme); err != nil {
 		return nil, err
 	}
 
-	return dep, nil
+	return ds, nil
 }

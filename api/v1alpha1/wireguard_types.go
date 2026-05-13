@@ -76,6 +76,8 @@ type WireguardSpec struct {
 	// HostNetwork specifies whether the agent pod should use the host's network namespace.
 	// When true, the pod will share the host's network stack.
 	HostNetwork bool `json:"hostNetwork,omitempty"`
+	// UseDaemonset specifies whether to deploy the Wireguard agent as a DaemonSet instead of a Deployment.
+	UseDaemonset bool `json:"useDaemonset,omitempty"`
 	// AgentHTTPPort specifies the HTTP port for the agent container.
 	// Defaults to 8080 if not specified.
 	AgentHTTPPort int32 `json:"agentHTTPPort,omitempty"`

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/nccloud/wireguard-operator/api/v1alpha1"
 	"github.com/nccloud/wireguard-operator/internal/agent"
 	"github.com/nccloud/wireguard-operator/internal/ipam"
@@ -72,6 +73,7 @@ type WireguardReconciler struct {
 	secretBuilder     *resources.SecretBuilder
 	serviceBuilder    *resources.ServiceBuilder
 	deploymentBuilder *resources.DeploymentBuilder
+	daemonSetBuilder  *resources.DaemonSetBuilder
 	configMapBuilder  *resources.ConfigMapBuilder
 	ipAllocator       *ipam.Allocator
 }
@@ -428,6 +430,7 @@ Endpoint = %s:%s%s
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="apps",resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="apps",resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="apps",resources=pods,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=list;watch
@@ -814,104 +817,10 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// deployment
-
-	deploymentFound := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-dep"), Namespace: wireguard.Namespace}, deploymentFound)
-	if err != nil && errors.IsNotFound(err) {
-		dep := r.deploymentForWireguard(wireguard)
-		log.Info("Creating a new dep", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name, "useUserspace", wireguard.Spec.UseWgUserspaceImplementation)
-		err = r.Create(ctx, dep)
-		if err != nil {
-			log.Error(err, "Failed to create new dep", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-		// Deployment created successfully - return and requeue
+	// workload (Deployment or DaemonSet based on spec)
+	workload, err := r.reconcileWorkload(ctx, wireguard, log)
+	if err != nil {
 		return ctrl.Result{}, err
-	} else if err != nil {
-		log.Error(err, "Failed to get dep")
-		return ctrl.Result{}, err
-	}
-
-	if deploymentFound.Spec.Template.Spec.Containers[0].Image != r.AgentImage {
-		dep := r.deploymentForWireguard(wireguard)
-		err = r.Update(ctx, dep)
-		if err != nil {
-			log.Error(err, "unable to update deployment image", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-	}
-
-	// ensure userspace flag presence matches spec
-	desiredUserspace := wireguard.Spec.UseWgUserspaceImplementation
-	existingUserspace := false
-	for _, c := range deploymentFound.Spec.Template.Spec.Containers {
-		if c.Name == "agent" {
-			if slices.Contains(c.Command, "--wg-use-userspace-implementation") {
-				existingUserspace = true
-			}
-			break
-		}
-	}
-	if existingUserspace != desiredUserspace {
-		log.Info("Updating deployment userspace flag", "desired", desiredUserspace, "existing", existingUserspace)
-		dep := r.deploymentForWireguard(wireguard)
-		if err := r.Update(ctx, dep); err != nil {
-			log.Error(err, "unable to update deployment userspace flag", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Ensure wstunnel sidecar presence matches spec
-	hasWstunnel := false
-	for _, c := range deploymentFound.Spec.Template.Spec.Containers {
-		if c.Name == "wstunnel" {
-			hasWstunnel = true
-			break
-		}
-	}
-	if hasWstunnel != wireguard.Spec.Tunnel.Enabled {
-		log.Info("Updating deployment tunnel sidecar", "desired", wireguard.Spec.Tunnel.Enabled, "existing", hasWstunnel)
-		dep := r.deploymentForWireguard(wireguard)
-		if err := r.Update(ctx, dep); err != nil {
-			log.Error(err, "unable to update deployment tunnel sidecar", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Ensure scheduling settings remain in sync with spec updates.
-	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.NodeSelector, wireguard.Spec.NodeSelector) ||
-		!reflect.DeepEqual(deploymentFound.Spec.Template.Spec.Tolerations, wireguard.Spec.Tolerations) {
-		log.Info("Updating deployment scheduling settings")
-		dep := r.deploymentForWireguard(wireguard)
-		if err := r.Update(ctx, dep); err != nil {
-			log.Error(err, "unable to update deployment scheduling settings", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-	}
-	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.HostNetwork, wireguard.Spec.HostNetwork) {
-		log.Info("Updating deployment host network settings")
-		dep := r.deploymentForWireguard(wireguard)
-		if err := r.Update(ctx, dep); err != nil {
-			log.Error(err, "unable to update deployment host network settings", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-	}
-	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntVal, wireguard.Spec.AgentHTTPPort) {
-		log.Info("Updating deployment agent HTTP port")
-		dep := r.deploymentForWireguard(wireguard)
-		if err := r.Update(ctx, dep); err != nil {
-			log.Error(err, "unable to update deployment agent HTTP port", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-	}
-	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.ImagePullSecrets, wireguard.Spec.ImagePullSecrets) {
-		log.Info("Updating deployment image pull secrets")
-		dep := r.deploymentForWireguard(wireguard)
-		if err := r.Update(ctx, dep); err != nil {
-			log.Error(err, "unable to update deployment image pull secrets", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
 	}
 
 	// Update resource-level status and unique identifier if available
@@ -952,21 +861,34 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		resourcesStatus = append(resourcesStatus, v1alpha1.Resource{Name: wireguard.Name, Type: "Secret", Status: secStatus})
 
-		// Deployment status
-		depStatus := "Pending"
-		depImage := ""
-		if deploymentFound.Name != "" {
-			if deploymentFound.Status.ReadyReplicas > 0 {
-				depStatus = "Ready"
+		// Workload status (Deployment or DaemonSet)
+		workloadStatus := "Pending"
+		workloadImage := ""
+		workloadType := r.getWorkloadType(wireguard)
+
+		switch w := workload.(type) {
+		case *appsv1.Deployment:
+			if w.Status.ReadyReplicas > 0 {
+				workloadStatus = "Ready"
 			}
-			for _, c := range deploymentFound.Spec.Template.Spec.Containers {
+			for _, c := range w.Spec.Template.Spec.Containers {
 				if c.Name == "agent" {
-					depImage = c.Image
+					workloadImage = c.Image
+					break
+				}
+			}
+		case *appsv1.DaemonSet:
+			if w.Status.NumberReady > 0 {
+				workloadStatus = "Ready"
+			}
+			for _, c := range w.Spec.Template.Spec.Containers {
+				if c.Name == "agent" {
+					workloadImage = c.Image
 					break
 				}
 			}
 		}
-		resourcesStatus = append(resourcesStatus, v1alpha1.Resource{Name: deploymentFound.Name, Type: "Deployment", Status: depStatus, Image: depImage})
+		resourcesStatus = append(resourcesStatus, v1alpha1.Resource{Name: workload.(client.Object).GetName(), Type: workloadType, Status: workloadStatus, Image: workloadImage})
 
 		// Compute tunnel status
 		tunnelStatus := "disabled"
@@ -1034,6 +956,7 @@ func (r *WireguardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.secretBuilder = resources.NewSecretBuilder(r.Scheme)
 	r.serviceBuilder = resources.NewServiceBuilder(r.Scheme)
 	r.deploymentBuilder = resources.NewDeploymentBuilder(r.Scheme, r.AgentImage, r.AgentImagePullPolicy)
+	r.daemonSetBuilder = resources.NewDaemonSetBuilder(r.Scheme, r.AgentImage, r.AgentImagePullPolicy)
 	r.configMapBuilder = resources.NewConfigMapBuilder(r.Scheme)
 	r.ipAllocator = ipam.NewAllocator()
 
@@ -1043,6 +966,7 @@ func (r *WireguardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.Secret{}).
 		Complete(r)
 }
@@ -1328,4 +1252,208 @@ func (r *WireguardReconciler) deploymentForWireguard(m *v1alpha1.Wireguard) *app
 
 	_ = ctrl.SetControllerReference(m, dep, r.Scheme)
 	return dep
+}
+
+// getWorkloadName returns the appropriate workload name based on UseDaemonset spec
+func (r *WireguardReconciler) getWorkloadName(wireguard *v1alpha1.Wireguard) string {
+	if wireguard.Spec.UseDaemonset {
+		return resources.SanitizeName(wireguard.Name, "-ds")
+	}
+	return resources.SanitizeName(wireguard.Name, "-dep")
+}
+
+// getWorkloadType returns the workload type string for status reporting
+func (r *WireguardReconciler) getWorkloadType(wireguard *v1alpha1.Wireguard) string {
+	if wireguard.Spec.UseDaemonset {
+		return "DaemonSet"
+	}
+	return "Deployment"
+}
+
+// reconcileWorkload manages both Deployment and DaemonSet based on spec
+func (r *WireguardReconciler) reconcileWorkload(ctx context.Context, wireguard *v1alpha1.Wireguard, log logr.Logger) (client.Object, error) {
+	if wireguard.Spec.UseDaemonset {
+		return r.reconcileDaemonSet(ctx, wireguard, log)
+	}
+	return r.reconcileDeployment(ctx, wireguard, log)
+}
+
+// reconcileDeployment manages the Deployment resource
+func (r *WireguardReconciler) reconcileDeployment(ctx context.Context, wireguard *v1alpha1.Wireguard, log logr.Logger) (*appsv1.Deployment, error) {
+	deploymentFound := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-dep"), Namespace: wireguard.Namespace}, deploymentFound)
+	if err != nil && errors.IsNotFound(err) {
+		dep := r.deploymentForWireguard(wireguard)
+		log.Info("Creating a new Deployment", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
+		err = r.Create(ctx, dep)
+		if err != nil {
+			log.Error(err, "Failed to create Deployment", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
+			return nil, err
+		}
+		return dep, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Deployment")
+		return nil, err
+	}
+
+	// Check if update is needed
+	needsUpdate := false
+
+	// Check image
+	if deploymentFound.Spec.Template.Spec.Containers[0].Image != r.AgentImage {
+		needsUpdate = true
+	}
+
+	// Check userspace flag
+	desiredUserspace := wireguard.Spec.UseWgUserspaceImplementation
+	existingUserspace := false
+	for _, c := range deploymentFound.Spec.Template.Spec.Containers {
+		if c.Name == "agent" {
+			if slices.Contains(c.Command, "--wg-use-userspace-implementation") {
+				existingUserspace = true
+			}
+			break
+		}
+	}
+	if existingUserspace != desiredUserspace {
+		needsUpdate = true
+	}
+
+	// Check wstunnel sidecar
+	hasWstunnel := false
+	for _, c := range deploymentFound.Spec.Template.Spec.Containers {
+		if c.Name == "wstunnel" {
+			hasWstunnel = true
+			break
+		}
+	}
+	if hasWstunnel != wireguard.Spec.Tunnel.Enabled {
+		needsUpdate = true
+	}
+
+	// Check scheduling settings
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.NodeSelector, wireguard.Spec.NodeSelector) ||
+		!reflect.DeepEqual(deploymentFound.Spec.Template.Spec.Tolerations, wireguard.Spec.Tolerations) {
+		needsUpdate = true
+	}
+
+	// Check host network
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.HostNetwork, wireguard.Spec.HostNetwork) {
+		needsUpdate = true
+	}
+
+	// Check agent HTTP port
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntVal, wireguard.Spec.AgentHTTPPort) {
+		needsUpdate = true
+	}
+
+	// Check image pull secrets
+	if !reflect.DeepEqual(deploymentFound.Spec.Template.Spec.ImagePullSecrets, wireguard.Spec.ImagePullSecrets) {
+		needsUpdate = true
+	}
+
+	if needsUpdate {
+		dep := r.deploymentForWireguard(wireguard)
+		if err := r.Update(ctx, dep); err != nil {
+			log.Error(err, "unable to update Deployment", "dep.Namespace", dep.Namespace, "dep.Name", dep.Name)
+			return nil, err
+		}
+	}
+
+	return deploymentFound, nil
+}
+
+// reconcileDaemonSet manages the DaemonSet resource
+func (r *WireguardReconciler) reconcileDaemonSet(ctx context.Context, wireguard *v1alpha1.Wireguard, log logr.Logger) (*appsv1.DaemonSet, error) {
+	daemonSetFound := &appsv1.DaemonSet{}
+	err := r.Get(ctx, types.NamespacedName{Name: resources.SanitizeName(wireguard.Name, "-ds"), Namespace: wireguard.Namespace}, daemonSetFound)
+	if err != nil && errors.IsNotFound(err) {
+		ds, err := r.daemonSetBuilder.ForWireguard(wireguard)
+		if err != nil {
+			log.Error(err, "Failed to build DaemonSet")
+			return nil, err
+		}
+		log.Info("Creating a new DaemonSet", "ds.Namespace", ds.Namespace, "ds.Name", ds.Name)
+		err = r.Create(ctx, ds)
+		if err != nil {
+			log.Error(err, "Failed to create DaemonSet", "ds.Namespace", ds.Namespace, "ds.Name", ds.Name)
+			return nil, err
+		}
+		return ds, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get DaemonSet")
+		return nil, err
+	}
+
+	// Check if update is needed
+	needsUpdate := false
+
+	// Check image
+	if daemonSetFound.Spec.Template.Spec.Containers[0].Image != r.AgentImage {
+		needsUpdate = true
+	}
+
+	// Check userspace flag
+	desiredUserspace := wireguard.Spec.UseWgUserspaceImplementation
+	existingUserspace := false
+	for _, c := range daemonSetFound.Spec.Template.Spec.Containers {
+		if c.Name == "agent" {
+			if slices.Contains(c.Command, "--wg-use-userspace-implementation") {
+				existingUserspace = true
+			}
+			break
+		}
+	}
+	if existingUserspace != desiredUserspace {
+		needsUpdate = true
+	}
+
+	// Check wstunnel sidecar
+	hasWstunnel := false
+	for _, c := range daemonSetFound.Spec.Template.Spec.Containers {
+		if c.Name == "wstunnel" {
+			hasWstunnel = true
+			break
+		}
+	}
+	if hasWstunnel != wireguard.Spec.Tunnel.Enabled {
+		needsUpdate = true
+	}
+
+	// Check scheduling settings
+	if !reflect.DeepEqual(daemonSetFound.Spec.Template.Spec.NodeSelector, wireguard.Spec.NodeSelector) ||
+		!reflect.DeepEqual(daemonSetFound.Spec.Template.Spec.Tolerations, wireguard.Spec.Tolerations) {
+		needsUpdate = true
+	}
+
+	// Check host network
+	if !reflect.DeepEqual(daemonSetFound.Spec.Template.Spec.HostNetwork, wireguard.Spec.HostNetwork) {
+		needsUpdate = true
+	}
+
+	// Check agent HTTP port
+	if len(daemonSetFound.Spec.Template.Spec.Containers) > 0 && daemonSetFound.Spec.Template.Spec.Containers[0].ReadinessProbe != nil {
+		if !reflect.DeepEqual(daemonSetFound.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntVal, wireguard.Spec.AgentHTTPPort) {
+			needsUpdate = true
+		}
+	}
+
+	// Check image pull secrets
+	if !reflect.DeepEqual(daemonSetFound.Spec.Template.Spec.ImagePullSecrets, wireguard.Spec.ImagePullSecrets) {
+		needsUpdate = true
+	}
+
+	if needsUpdate {
+		ds, err := r.daemonSetBuilder.ForWireguard(wireguard)
+		if err != nil {
+			log.Error(err, "Failed to build DaemonSet for update")
+			return nil, err
+		}
+		if err := r.Update(ctx, ds); err != nil {
+			log.Error(err, "unable to update DaemonSet", "ds.Namespace", ds.Namespace, "ds.Name", ds.Name)
+			return nil, err
+		}
+	}
+
+	return daemonSetFound, nil
 }

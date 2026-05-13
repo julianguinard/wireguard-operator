@@ -410,6 +410,10 @@ spec:
                     - wstunnel
                     type: string
                 type: object
+              useDaemonset:
+                description: UseDaemonset specifies whether to deploy the Wireguard
+                  agent as a DaemonSet instead of a Deployment.
+                type: boolean
               useWgUserspaceImplementation:
                 description: A boolean field that specifies whether to use the userspace
                   implementation of Wireguard instead of the kernel one.
