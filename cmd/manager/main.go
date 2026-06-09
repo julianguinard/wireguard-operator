@@ -19,6 +19,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
+	"net/http/pprof"
 	"os"
 
 	vpnv1alpha1 "github.com/nccloud/wireguard-operator/api/v1alpha1"
@@ -60,6 +62,7 @@ func main() {
 	var probeAddr string
 	var wgImage string
 	var leaderElectionNamespaceFlag string
+	var profilingPort int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&wgImage, "agent-image", "", "The image used for wireguard server")
@@ -68,6 +71,7 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&agentImagePullPolicy, "agent-image-pull-policy", "IfNotPresent", "Use userspace implementation")
 	flag.StringVar(&leaderElectionNamespaceFlag, "leader-election-namespace", "", "Namespace to place the leader election Lease. Defaults to the operator Pod's namespace when empty.")
+	flag.IntVar(&profilingPort, "profiling-port", 0, "The port to bind the pprof profiling server on (0 to disable)")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -137,6 +141,29 @@ func main() {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
+	}
+
+	if profilingPort > 0 {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+		mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+		mux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+		mux.Handle("/debug/pprof/block", pprof.Handler("block"))
+		mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+
+		profilingAddr := fmt.Sprintf(":%d", profilingPort)
+		setupLog.Info("starting pprof profiling server", "address", profilingAddr)
+		go func() {
+			if err := http.ListenAndServe(profilingAddr, mux); err != nil {
+				setupLog.Error(err, "problem running profiling server")
+				os.Exit(1)
+			}
+		}()
 	}
 
 	setupLog.Info("starting manager")
