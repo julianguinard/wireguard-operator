@@ -151,7 +151,7 @@ func TestGenerateIptableRulesFromPeersWithSnatAs(t *testing.T) {
 
 	for _, CIDR := range append(additionalPeerCIDRs, cidr) {
 		// Check that SNAT rule is present with correct interface
-		expectedSnatRule := "-A POSTROUTING -s " + CIDR + " -o " + iface + " -j SNAT --to-source " + snatAs
+		expectedSnatRule := "-A POSTROUTING -d " + CIDR + " -j SNAT --to-source " + snatAs
 		if !containsSubstring(rules, expectedSnatRule) {
 			t.Fatalf("expected SNAT rule %q, got: %s", expectedSnatRule, rules)
 		}
@@ -177,7 +177,7 @@ func TestGenerateIptableRulesFromPeersWithCustomInterface(t *testing.T) {
 	// Check that SNAT rule uses the custom interface name
 	for _, CIDR := range append(additionalPeerCIDRs, cidr) {
 		// Check that SNAT rule is present with correct interface
-		expectedSnatRule := "-A POSTROUTING -s " + CIDR + " -o " + iface + " -j SNAT --to-source " + snatAs
+		expectedSnatRule := "-A POSTROUTING -d " + CIDR + " -j SNAT --to-source " + snatAs
 		if !containsSubstring(rules, expectedSnatRule) {
 			t.Fatalf("expected SNAT rule %q, got: %s", expectedSnatRule, rules)
 		}

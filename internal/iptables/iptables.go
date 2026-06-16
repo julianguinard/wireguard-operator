@@ -132,8 +132,8 @@ func GenerateIptableRulesFromPeers(peerCIDR string, wgHostName string, dns strin
 	if snatAs != "" {
 		for _, CIDR := range append([]string{peerCIDR}, additionalPeerCIDRs...) {
 			natTableRules = fmt.Sprintf(`%s
--A POSTROUTING -s %s -o %s -j SNAT --to-source %s
-`, natTableRules, CIDR, iface, snatAs)
+-A POSTROUTING -d %s -j SNAT --to-source %s
+`, natTableRules, CIDR, snatAs)
 		}
 	}
 	natTableRules = fmt.Sprintf(`%s
@@ -171,8 +171,8 @@ func GenerateIp6tableRulesFromPeers(peerCIDR string, wgHostName string, dns stri
 	if snatAs != "" {
 		for _, CIDR := range append([]string{peerCIDR}, additionalPeerCIDRs...) {
 			natTableRules = fmt.Sprintf(`%s
--A POSTROUTING -s %s -o %s -j SNAT --to-source %s
-`, natTableRules, CIDR, iface, snatAs)
+-A POSTROUTING -d %s -j SNAT --to-source %s
+`, natTableRules, CIDR, snatAs)
 		}
 	}
 	natTableRules = fmt.Sprintf(`%s
